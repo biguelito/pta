@@ -10,10 +10,12 @@ serverSocket.bind(('',serverPort))
 serverSocket.listen(1)
 
 # get msg from client
-def get_msg(msg):
+def get_msg(cSocket):
+    msg = cSocket.recv(1024).decode()
     msg = msg.split(' ')
-    seq, c, a = msg[0], msg[1], msg[2:]
-    print(seq, c, a)
+    seq, c, a = msg[0], msg[1], None
+    if len(msg) == 3:
+        a = msg[2]
     return seq, c, a
 
 # send answer back to client
@@ -25,73 +27,75 @@ def ansClient(seq, r, args=None, close=False):
     if close:
         ConnectionSocket.close()
 
+# send file to client
+def sendFile(seq_num, client_file):
+    path = f'files/{client_file}'
+    filesize = getsize(path)
+    with open(path, 'rb') as cf:
+        byt = cf.read()
+        ans_args = f'{str(filesize)} {byt}'
+        ansClient(seq_num, 'ARQ', ans_args)
+        byt = cf.read(2048)
+        while byt != b'':
+            ans_args = f'{str(filesize)} {byt}'
+            ansClient(seq_num, 'ARQ', ans_args)
+            byt = cf.read(2048)
+        
 print('server pta ok')
 
 while 1:
     try:
-        # doing connection and check if it's a valid user
+        # starting connection and check if it's a valid user
         ConnectionSocket, addr = serverSocket.accept()
-        msg = ConnectionSocket.recv(1024).decode()
-        seq_num, command, args = get_msg(msg)
+        seq_num, command, args = get_msg(ConnectionSocket)
+        userin = False
+    
+        if command != 'CUMP':
+            ansClient(seq_num, 'NOK', close=True)
+            continue
+        
+        try:
+            file = open('users.txt', 'r')
+            users = file.read().splitlines()
+            file.close()
+            if args not in users:
+                ansClient(seq_num, 'NOK', close=True)
+                continue
+        except:
+            ansClient(seq_num, 'NOK', close=True)
+            continue
 
-        if seq_num == '0':
-            if command != 'CUMP':
-                ansClient(seq_num, 'NOK', close=True)
-                continue
-            
-            try:
-            # users
-                file = open('users.txt', 'r')
-                users = [x[:-1] for x in file.readlines()]
-                file.close()
-                if args[0] not in users:
-                    ansClient(seq_num, 'NOK', close=True)
-                    continue
-            except:
-                ansClient(seq_num, 'NOK', close=True)
-                continue
- 
-            ansClient(seq_num, 'OK')
+        ansClient(seq_num, 'OK')
+        userin = True
 
         while 1:
             
-            msg = ConnectionSocket.recv(1024).decode()
-            if not msg:
-                continue
-            seq_num, command, args = get_msg(msg)
-            
+            # handling client commands over files
+            seq_num, command, args = get_msg(ConnectionSocket)
             try:
-                if command == 'LIST':
+                if command == 'LIST' and userin:
                     files = [x for x in listdir('files')]
                     filesname = ','.join(files)
 
                     ans_args = str(len(files)) + ' ' + filesname   
                     ansClient(seq_num, 'ARQS', ans_args)            
 
-                elif command == 'PEGA':
+                elif command == 'PEGA' and userin:
                     files = [x for x in listdir('files')]
-
-                    client_filename = args[0]
-                    if client_filename not in files:
+                    
+                    if args not in files:
                         ansClient(seq_num, 'NOK')
                         continue
                     
-                    filesize = str(getsize(f'files/{client_filename}'))
+                    sendFile(seq_num, args)
 
-                    cf = open(f'files/{client_filename}', 'rb')
-                    byt = cf.read(2048)
-                    ans_args = f'{filesize} {byt}'
-                    ansClient(seq_num, 'ARQ', ans_args)
-                    byt = cf.read(2048)
-                    while byt != b'':
-                        ans_args = f'{filesize} {byt}'
-                        ansClient(seq_num, 'ARQ', ans_args)
-                        byt = cf.read(2048)  
-                    cf.close()
-
-                elif command == 'TERM':
+                elif command == 'TERM' and userin:
                     ansClient(seq_num, 'OK', close=True)
                     break
+
+                else:
+                    ansClient(seq_num, 'NOK')
+                    
 
             except Exception as e:
                 ansClient(seq_num, 'NOK')
